@@ -6,14 +6,20 @@ This project contains source code and supporting files for a serverless applicat
 - `src` - Code for the application's Lambda function.
 - `template.yaml` - A template that defines the application's AWS resources.
 
-The application uses Lambda functions (as sample backend and another for authorizer) and API Gateway REST API. These resources are defined in the `template.yaml` file in this project. You can update the template to add AWS resources through the same deployment process that updates your application code.
+## Project Details
+The application demonstrates building API Gateway REST APIs protected using [Lambda Authorizer](https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-use-lambda-authorizer.html). These resources are defined in the `template.yaml` file in this project. 
+You can update the template to add AWS resources through the same deployment process that updates your application code.
 The authorizer expects an authorization header (**AuthorizationToken** set to `allow` or `deny`) in the requests to communicate with a AWS Lambda backend, external service or Lambda as proxy.
-Build using SAM cli (does require Python3.9), sam build followed by sam deploy –guided.
+Build using SAM cli (requires Python3.9): sam build followed by sam deploy –guided.
 
-Sample Urls to test: 
-Lambda Backend (GET) : https://<API_GATEWAY_REST_API_ENDPOINT>.amazonaws.com/dev (custom mapping of requests to backend)
-Lambda Proxy as Backend (GET) : https://<API_GATEWAY_REST_API_ENDPOINT>.amazonaws.com/dev/lambdaProxy (no request mapping template allowed, everything passed directly to Lambda)
-External Service (GET or POST) : https://<API_GATEWAY_REST_API_ENDPOINT>.amazonaws.com/dev/extService (custom mapping of requests to backend)
+### Testing against sample Urls: 
+
+Use curl with `-H "AuthorizationToken: allow"` or `-H "AuthorizationToken: deny"` to test against the api gateway endpoints with appropriate path.
+
+Supported endpoints:
+* Lambda Backend (GET) : https://<API_GATEWAY_REST_API_ENDPOINT>.amazonaws.com/dev (custom mapping of requests to backend)
+* Lambda Proxy as Backend (GET) : https://<API_GATEWAY_REST_API_ENDPOINT>.amazonaws.com/dev/lambdaProxy (no request mapping template allowed, everything passed directly to Lambda)
+* External Service (GET or POST) : https://<API_GATEWAY_REST_API_ENDPOINT>.amazonaws.com/dev/extService (custom mapping of requests to backend)
 
 
 ## Deploy the sample application

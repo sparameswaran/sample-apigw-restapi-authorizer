@@ -1,0 +1,299 @@
+# This is the SAM template that represents the architecture of your serverless application
+# https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-sam-template-basics.html
+
+# The AWSTemplateFormatVersion identifies the capabilities of the template
+# https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/format-version-structure.html
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  api-gw-lambda-auth
+
+# Transform section specifies one or more macros that AWS CloudFormation uses to process your template
+# https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/transform-section-structure.html
+Transform:
+- AWS::Serverless-2016-10-31
+
+# Resources declares the AWS resources that you want to include in the stack
+# https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/resources-section-structure.html
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Tracing: Active
+    Runtime: python3.9
+    CodeUri: src/handlers
+    Architectures:
+      - x86_64
+    MemorySize: 128
+    Timeout: 100    
+  Api:
+    TracingEnabled: True
+
+Parameters:
+  StageName:
+    Type: String
+    Default: 'dev'
+    
+Resources:
+      
+  SampleAppFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: app.lambda_handler
+
+
+  # Permission to allow Lambda invocation from API Gateway
+  AppFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref SampleAppFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${TestRestApi}/*
+
+  # Lambda Token Authorizer
+  AuthorizersLambdaToken:
+    Type: AWS::ApiGateway::Authorizer
+    Properties:
+      Name: LambdaAuthorizerToken
+      Type: TOKEN
+      RestApiId: !Ref TestRestApi
+      IdentitySource: method.request.header.AuthorizationToken
+      AuthorizerUri: !Join ['', ['arn:aws:apigateway:', !Ref AWS::Region, ':lambda:path/2015-03-31/functions/', !GetAtt TestLambdaAuthorizer.Arn, '/invocations']]
+
+
+
+  TestLambdaAuthorizer:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: testLambdaAuthorizer.authorize
+      Description: Sample Lambda Authorizer
+
+
+  # Permission to allow Lambda authorizer invocation from API Gateway
+  TokenAuthorizerFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref TestLambdaAuthorizer
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${TestRestApi}/authorizers/${AuthorizersLambdaToken}
+
+  TestRestApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: TestRestApis
+      EndpointConfiguration:
+        Types:
+        - REGIONAL
+
+  RootMethodGet:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref TestRestApi
+      ResourceId: !GetAtt TestRestApi.RootResourceId
+      HttpMethod: GET
+      AuthorizationType: CUSTOM
+      AuthorizerId: !Ref AuthorizersLambdaToken
+      Integration:
+        Type: AWS
+        IntegrationHttpMethod: POST
+        PassthroughBehavior: WHEN_NO_TEMPLATES
+        Uri: !Join ['', ['arn:aws:apigateway:', !Ref AWS::Region, ':lambda:path/2015-03-31/functions/', !GetAtt SampleAppFunction.Arn, '/invocations']]
+        IntegrationResponses:
+        - StatusCode: 200
+          ResponseTemplates:
+            application/json: "$input.json('$.body')"
+        RequestTemplates:
+          application/json: "#set($context.requestOverride.header.CustomAccessToken=$context.authorizer.CustomAuthorizationToken)\n\
+            #set($context.requestOverride.header.CustomHeader=$context.authorizer.CustomPayload)\n\
+            #set($context.requestOverride.header.AuthenticatedPrincipal = $context.authorizer.principalId)\n\
+            {\n    \"method\": \"$context.httpMethod\",\n    \"headers\": {\n    \
+            \    \"MyKey1\": \"$context.authorizer.stringKey\",\n        \"MyKey2\"\
+            : \"$context.authorizer.numberKey\",\n        \"AuthenticatedPrincipal\": \"$context.authorizer.principalId\"\
+            ,\n        \"MyCustomHeader\": \"$context.authorizer.CustomPayload\"\
+            ,\n        \"MyAccessToken\": \"$context.authorizer.CustomAuthorizationToken\",\n\
+            \        #foreach($param in $input.params().header.keySet())\n       \
+            \ \"$param\": \"$util.escapeJavaScript($input.params().header.get($param))\"\
+            \n        #if($foreach.hasNext),#end\n        #end\n    }\n}"
+
+
+      RequestParameters:
+        method.request.querystring.name: false
+        method.request.header.AuthorizationToken: true
+      MethodResponses:
+      - StatusCode: 200
+
+
+
+  TestExternalResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref TestRestApi
+      ParentId: !GetAtt TestRestApi.RootResourceId
+      PathPart: extService
+        
+
+  TestExternalGet:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref TestRestApi
+      ResourceId: !Ref TestExternalResource
+      HttpMethod: GET
+      AuthorizationType: CUSTOM
+      AuthorizerId: !Ref AuthorizersLambdaToken
+      Integration:
+        Type: HTTP
+        Uri: https://httpbin.org/get
+        IntegrationHttpMethod: GET
+        PassthroughBehavior: WHEN_NO_TEMPLATES
+        IntegrationResponses:
+        - StatusCode: 200
+        RequestTemplates:
+          application/json: "#set($context.requestOverride.header.CustomAccessToken=$context.authorizer.CustomAuthorizationToken)\n\
+            #set($context.requestOverride.header.CustomHeader=$context.authorizer.CustomPayload)\n\
+            #set($context.requestOverride.header.AuthenticatedPrincipal = $context.authorizer.principalId)\n"
+
+      RequestParameters:
+        method.request.querystring.name: false
+        method.request.header.AuthorizationToken: true
+      MethodResponses:
+      - StatusCode: 200
+
+  TestExternalPost:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref TestRestApi
+      ResourceId: !Ref TestExternalResource
+      HttpMethod: POST
+      AuthorizationType: CUSTOM
+      AuthorizerId: !Ref AuthorizersLambdaToken
+      Integration:
+        Type: HTTP
+        Uri: https://httpbin.org/post
+        IntegrationHttpMethod: POST
+        PassthroughBehavior: WHEN_NO_TEMPLATES
+        IntegrationResponses:
+        - StatusCode: 200
+        RequestTemplates:
+          application/json: "#set($context.requestOverride.header.CustomAccessToken=$context.authorizer.CustomAuthorizationToken)\n\
+            #set($context.requestOverride.header.CustomHeader=$context.authorizer.CustomPayload)\n\
+            #set($context.requestOverride.header.AuthenticatedPrincipal = $context.authorizer.principalId)\n\
+            {\n    \"method\": \"$context.httpMethod\",\n    \"headers\": {\n    \
+            \    \"MyKey1\": \"$context.authorizer.stringKey\",\n        \"MyKey2\"\
+            : \"$context.authorizer.numberKey\",\n        \"AuthenticatedPrincipal\": \"$context.authorizer.principalId\"\
+            ,\n        \"MyCustomHeader\": \"$context.authorizer.CustomPayload\"\
+            ,\n        \"MyAccessToken\": \"$context.authorizer.CustomAuthorizationToken\",\n\
+            \        #foreach($param in $input.params().header.keySet())\n       \
+            \ \"$param\": \"$util.escapeJavaScript($input.params().header.get($param))\"\
+            \n        #if($foreach.hasNext),#end\n        #end\n    },\n\
+            \    \"orig_incoming_body\": \"$input.json('$')\"\n}"
+            
+      RequestParameters:
+        method.request.querystring.name: false
+        method.request.header.AuthorizationToken: true
+      MethodResponses:
+      - StatusCode: 200
+
+
+  TestLambdaProxyAsResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref TestRestApi
+      ParentId: !GetAtt TestRestApi.RootResourceId
+      PathPart: lambdaProxy
+        
+
+  TestLambdaProxyGet:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref TestRestApi
+      ResourceId: !Ref TestLambdaProxyAsResource
+      HttpMethod: GET
+      AuthorizationType: CUSTOM
+      AuthorizerId: !Ref AuthorizersLambdaToken
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Join ['', ['arn:aws:apigateway:', !Ref AWS::Region, ':lambda:path/2015-03-31/functions/', !GetAtt SampleAppFunction.Arn, '/invocations']]
+        IntegrationResponses:
+        - StatusCode: 200
+          ResponseTemplates:
+            application/json: "$input.json('$.body')"
+      RequestParameters:
+        method.request.querystring.name: false
+        method.request.header.AuthorizationToken: true
+      MethodResponses:
+      - StatusCode: 200
+
+  ApiGatewayCloudWatchLogsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - apigateway.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Policies:
+      - PolicyName: ApiGatewayLogsPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:DescribeLogGroups
+            - logs:DescribeLogStreams
+            - logs:PutLogEvents
+            - logs:GetLogEvents
+            - logs:FilterLogEvents
+            Resource: "*"
+
+  ApiGWLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Join ['', ['/aws/apigateway/', 'test-restapi-authorizer-', !Ref TestRestApi ] ]
+      RetentionInDays: 7
+
+  ApiGatewayAccount:
+    Type: AWS::ApiGateway::Account
+    Properties:
+      CloudWatchRoleArn: !GetAtt ApiGatewayCloudWatchLogsRole.Arn
+        
+
+  Deployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+    - RootMethodGet
+    - ApiGatewayAccount
+    - TestRestApi
+    Properties:
+      RestApiId: !Ref TestRestApi
+      
+  Stage:
+    Type: AWS::ApiGateway::Stage
+    DependsOn:
+      - Deployment
+    Properties:
+      StageName: !Ref StageName
+      RestApiId: !Ref TestRestApi
+      DeploymentId: !Ref Deployment
+      AccessLogSetting:
+        DestinationArn: !GetAtt ApiGWLogGroup.Arn
+        Format: '{ "requestId":"$context.requestId", "ip": "$context.identity.sourceIp", "caller":"$context.identity.caller", "user":"$context.identity.user","requestTime":"$context.requestTime", "httpMethod":"$context.httpMethod","resourcePath":"$context.resourcePath", "status":"$context.status","protocol":"$context.protocol", "responseLength":"$context.responseLength" }'
+      MethodSettings:
+      - DataTraceEnabled: true
+        HttpMethod: "*"
+        LoggingLevel: INFO
+        ResourcePath: "/*"
+
+Outputs:
+  ApiEndpoint:
+    Description: "API Gateway endpoint URL for Prod stage"
+    Value: !Sub "https://${TestRestApi}.execute-api.${AWS::Region}.amazonaws.com/${StageName}/"
+  Authorizer:
+    Description: "Lambda Authorizer"
+    Value: !Ref TestLambdaAuthorizer

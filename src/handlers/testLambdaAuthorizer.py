@@ -1,11 +1,14 @@
 import re
+def lowerTuple(t):
+ return (t[0].lower(),t[1])
+
 
 def authorize(event, context):
     print(event)
-    print("Client token: " + event['authorizationToken'])
-    print("Method ARN: " + event['methodArn'])
+    #print("Client token: " + event['authorizationToken'])
+    #print("Method ARN: " + event['methodArn'])
 
-    if ( event.get('authorizationToken') == None):
+    if ( event.get('authorizationToken') == None and event.get('AuthorizationToken') == None and  event.get('Authorization') == None) :
         event['authorizationToken'] = 'deny'
         
     '''
@@ -38,15 +41,50 @@ def authorize(event, context):
 
     The example policy below denies access to all resources in the RestApi.
     '''
-    tmp = event['methodArn'].split(':')
-    apiGatewayArnTmp = tmp[5].split('/')
-    awsAccountId = tmp[4]
+    
+    # default deny
+    authToken = 'deny'
+    
+    eventHeaders = event
+    arn = event.get('methodArn') #works for REST
+    
+    # Check if its being used with HTTP APIs
+    if arn == None:
+        arn = event.get('routeArn')      
+        # pull auth token from event headers
+        # Sample payload
+        # {'version': '2.0', 'type': 'REQUEST', 'routeArn': 'arn:aws:execute-api:us-west-2:xxx:xxx/$default/GET/get', 
+        # 'identitySource': ['allow'], 'routeKey': 'ANY /get', 'rawPath': '/get', 'rawQueryString': '', 
+        # 'headers': {'accept': '*/*', 'authorizationtoken': 'allow', 'content-length': '0', 'host': 'xxx.execute-api.us-west-2.amazonaws.com', ...}, 
+        # 'requestContext': {'accountId': 'xxxxx', 'apiId': 'xxxx', 'domainName': 'xxxx.execute-api.us-west-2.amazonaws.com', ..., 
+        # 'http': {'method': 'GET', 'path': '/get', 'protocol': 'HTTP/1.1', 'sourceIp': '20xxxx.176', 'userAgent': 'curl/7.87.0'}, 
+        # 'requestId': 'FJJ4NhOXvHcEPGw=', 'routeKey': 'ANY /get', 'stage': '$default', ...}
+        eventHeaders = event['headers']
+        print('Event headers for HTTP: ', eventHeaders)
+    else:
+        print('Event headers for REST: ', eventHeaders)
+        
+    #lowercaseHeaderDict = dict(map(lambda (key, value) : (string.lower(key),value),eventHeaders.items()))
+    lowercaseHeaderDict = dict(map(lowerTuple, eventHeaders.items()))
+    
+    # check for case insensitive combinations of 'authorizationtoken' or 'authorization' header variable
+    authToken = lowercaseHeaderDict.get('authorizationtoken')
+    if authToken == None:
+        authToken = lowercaseHeaderDict.get('authorization')
+        
+    print('Auth token from event: ', authToken)
+        
+    tmpArr = arn.split(':')
+    apiGatewayArnTmp = tmpArr[5].split('/')
+    awsAccountId = tmpArr[4]
 
     policy = AuthPolicy(principalId, awsAccountId)
     policy.restApiId = apiGatewayArnTmp[0]
-    policy.region = tmp[3]
+    policy.region = tmpArr[3]
     policy.stage = apiGatewayArnTmp[1]
-    if event['authorizationToken'] == 'allow':
+  
+    print('Incoming auth token: ', authToken)
+    if authToken == 'allow':
         policy.allowMethod(HttpVerb.ALL, '/*')
     else:
         policy.denyAllMethods()
